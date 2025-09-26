@@ -21,96 +21,89 @@ let AccountNotebookService = class AccountNotebookService {
         this.dataSource = dataSource;
     }
     async acceptDebt(id, body) {
-        var _a;
-        if (!(body === null || body === void 0 ? void 0 : body.status) || body.status !== 'ACCEPTED') {
+        var _a, _b;
+        if ((body === null || body === void 0 ? void 0 : body.status) !== 'ACCEPTED') {
             throw new common_1.BadRequestException('Solo se permite la transicion a status ACCEPTED.');
         }
         if (!body.user_id_creditor) {
             throw new common_1.BadRequestException('user_id_creditor es obligatorio.');
         }
-        const queryRunner = this.dataSource.createQueryRunner();
-        await queryRunner.connect();
-        await queryRunner.startTransaction('SERIALIZABLE');
+        const qr = this.dataSource.createQueryRunner();
+        await qr.connect();
+        await qr.startTransaction('SERIALIZABLE');
         try {
-            const debt = await queryRunner.manager.findOne(account_notebook_entity_1.AccountNotebook, {
-                where: { id },
-                lock: { mode: 'pessimistic_write' },
-            });
-            if (!debt) {
-                throw new common_1.NotFoundException('Deuda no encontrada.');
-            }
-            if (debt.user_id_creditor !== body.user_id_creditor) {
-                throw new common_1.BadRequestException('El tendero enviado no coincide con la deuda.');
-            }
-            if (debt.status === 'ACCEPTED') {
-                const response = {
-                    ok: true,
-                    incentive: (_a = debt.status_by_pay_shopkeeper) !== null && _a !== void 0 ? _a : 'HigherLimitToPay',
-                };
-                if (debt.id_transaction_pay_shopkeeper) {
-                    response.txId = debt.id_transaction_pay_shopkeeper;
+            await qr.manager.query(`SELECT pg_advisory_xact_lock(hashtext($1));`, [body.user_id_creditor]);
+            const updDebt = await qr.manager.query(`UPDATE public.account_notebook
+           SET status = 'ACCEPTED',
+               update_at = now()
+         WHERE id = $1
+           AND status = 'CREATED'
+           AND user_id_creditor = $2
+         RETURNING id, status_by_pay_shopkeeper, id_transaction_pay_shopkeeper;`, [id, body.user_id_creditor]);
+            if (updDebt.length === 0) {
+                const already = await qr.manager.findOne(account_notebook_entity_1.AccountNotebook, { where: { id } });
+                if (!already) {
+                    throw new common_1.NotFoundException('Deuda no encontrada.');
                 }
-                await queryRunner.commitTransaction();
-                return response;
+                if (String(already.user_id_creditor) !== String(body.user_id_creditor)) {
+                    throw new common_1.BadRequestException('El tendero enviado no coincide con la deuda.');
+                }
+                return {
+                    ok: true,
+                    incentive: (_a = already.status_by_pay_shopkeeper) !== null && _a !== void 0 ? _a : 'HigherLimitToPay',
+                    txId: (_b = already.id_transaction_pay_shopkeeper) !== null && _b !== void 0 ? _b : undefined,
+                };
             }
-            if (debt.status !== 'CREATED') {
-                throw new common_1.BadRequestException('La deuda no esta disponible para aceptacion.');
-            }
-            await queryRunner.manager.query(`INSERT INTO public.user_notebook_subscription (user_id_creditor)
+            await qr.manager.query(`INSERT INTO public.user_notebook_subscription (user_id_creditor)
          VALUES ($1)
          ON CONFLICT (user_id_creditor) DO NOTHING;`, [body.user_id_creditor]);
-            const incrementResult = await queryRunner.manager.query(`UPDATE public.user_notebook_subscription
-             SET
-               notebook_count_accepted = notebook_count_accepted + 1,
-               update_at = now(),
-               is_pay_completed = CASE
-                 WHEN notebook_count_accepted + 1 >= notebook_end_limit THEN true
-                 ELSE false
-               END
-           WHERE user_id_creditor = $1
-             AND notebook_count_accepted < notebook_end_limit
-           RETURNING notebook_count_accepted, notebook_end_limit;`, [body.user_id_creditor]);
+            const inc = await qr.manager.query(`WITH incr AS (
+           UPDATE public.user_notebook_subscription
+              SET notebook_count_accepted = notebook_count_accepted + 1,
+                  update_at = now()
+            WHERE user_id_creditor = $1
+              AND is_pay_completed = false
+              AND notebook_count_accepted < notebook_end_limit
+            RETURNING notebook_count_accepted AS pos, notebook_end_limit AS lim
+         )
+         SELECT pos, lim FROM incr;`, [body.user_id_creditor]);
             let incentive = 'HigherLimitToPay';
             let txId;
-            if (incrementResult.length > 0) {
-                const position = Number(incrementResult[0].notebook_count_accepted);
-                const endLimit = Number(incrementResult[0].notebook_end_limit);
-                if (position <= 3) {
+            if (inc.length > 0) {
+                const pos = Number(inc[0].pos);
+                const lim = Number(inc[0].lim);
+                if (pos <= 3) {
                     incentive = 'LowerLimitToPay';
                 }
-                else if (position <= endLimit) {
+                else if (pos <= lim) {
                     incentive = 'LimitCanPay';
-                    txId = (0, uuid_1.v4)().replace(/-/g, '');
+                    txId = (0, uuid_1.v4)().replace(/-/g, '').slice(0, 40);
+                }
+                if (pos === lim) {
+                    await qr.manager.query(`UPDATE public.user_notebook_subscription
+               SET is_pay_completed = true, update_at = now()
+             WHERE user_id_creditor = $1;`, [body.user_id_creditor]);
                 }
             }
             const amountValue = incentive === 'LimitCanPay' ? LIMIT_CAN_PAY_AMOUNT : ZERO_AMOUNT;
-            await queryRunner.manager.query(`UPDATE public.account_notebook
-            SET
-              status = 'ACCEPTED',
-              update_at = now(),
-              status_by_pay_shopkeeper = $2,
-              amount = $4::money,
-              id_transaction_pay_shopkeeper = CASE
-                WHEN $3::varchar IS NOT NULL THEN COALESCE(id_transaction_pay_shopkeeper, $3::varchar)
-                ELSE id_transaction_pay_shopkeeper
-              END
-          WHERE id = $1;`, [id, incentive, txId !== null && txId !== void 0 ? txId : null, amountValue]);
-            await queryRunner.commitTransaction();
-            const response = {
-                ok: true,
-                incentive,
-            };
-            if (txId) {
-                response.txId = txId;
-            }
-            return response;
+            await qr.manager.query(`UPDATE public.account_notebook
+            SET status_by_pay_shopkeeper = $2,
+                amount = $3::money,
+                id_transaction_pay_shopkeeper = CASE
+                   WHEN $4::varchar IS NOT NULL THEN COALESCE(id_transaction_pay_shopkeeper, $4::varchar)
+                   ELSE id_transaction_pay_shopkeeper
+                END,
+                update_at = now()
+          WHERE id = $1;`, [id, incentive, amountValue, txId !== null && txId !== void 0 ? txId : null]);
+            await qr.commitTransaction();
+            return { ok: true, incentive, txId };
         }
-        catch (error) {
-            await queryRunner.rollbackTransaction();
-            throw error;
+        catch (e) {
+            await qr.rollbackTransaction();
+            throw e;
         }
         finally {
-            await queryRunner.release();
+            await qr.release();
         }
     }
 };

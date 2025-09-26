@@ -117,4 +117,18 @@ export class AccountNotebookService {
                    WHEN $4::varchar IS NOT NULL THEN COALESCE(id_transaction_pay_shopkeeper, $4::varchar)
                    ELSE id_transaction_pay_shopkeeper
                 END,
- 
+                update_at = now()
+          WHERE id = $1;`,
+        [id, incentive, amountValue, txId ?? null],
+      );
+
+      await qr.commitTransaction();
+      return { ok: true, incentive, txId };
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
+    }
+  }
+}
