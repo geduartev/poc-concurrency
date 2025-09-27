@@ -112,6 +112,7 @@ async def _fire_request(
 async def accept_batches(
     batches: List[TenderBatch],
     request_concurrency: int,
+    attempts_per_debt: int,
 ) -> Dict[str, Counter]:
     base_url = os.getenv("API_BASE", "http://localhost:3000")
     headers: Dict[str, str] = {"Content-Type": "application/json"}
@@ -198,6 +199,7 @@ def main() -> None:
     tender_count = int(os.getenv("TENDER_COUNT", "20"))
     debts_per_tender = int(os.getenv("DEBTS_PER_TENDER", "20"))
     request_concurrency = int(os.getenv("REQUEST_CONCURRENCY", "80"))
+    attempts_per_debt = max(1, int(os.getenv("ATTEMPTS_PER_DEBT", "1")))
     reset_db = os.getenv("RESET_DB", "true").lower() in {"1", "true", "yes"}
 
     reset_database_if_needed(reset_db)
@@ -210,7 +212,7 @@ def main() -> None:
         "Lanzando aceptaciones concurrentes con",
         f"request_concurrency={request_concurrency}",
     )
-    counters = asyncio.run(accept_batches(batches, request_concurrency))
+    counters = asyncio.run(accept_batches(batches, request_concurrency, attempts_per_debt))
 
     for tender_id, counter in counters.items():
         print(f"{tender_id}: {dict(counter)}")

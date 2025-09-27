@@ -205,9 +205,9 @@ Ajusta las variables antes de ejecutar el script:
 
 Ejemplo en PowerShell:
 ```powershell
-$env:TENDER_COUNT = "30"
-$env:DEBTS_PER_TENDER = "25"
-$env:REQUEST_CONCURRENCY = "120"
+$env:TENDER_COUNT = "20"
+$env:DEBTS_PER_TENDER = "20"
+$env:REQUEST_CONCURRENCY = "20"
 python loadtest-python/multi_tender_loadtest.py
 ```
 
