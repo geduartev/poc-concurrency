@@ -1,9 +1,9 @@
 import asyncio
 import os
 import uuid
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import httpx
 import psycopg2
@@ -109,34 +109,9 @@ async def _fire_request(
         )
 
 
-async def _run_for_tender(
-    client: httpx.AsyncClient,
-    batch: TenderBatch,
-    request_semaphore: asyncio.Semaphore,
-) -> Counter:
-    payload = {"status": "ACCEPTED", "user_id_creditor": batch.user_id_creditor}
-    tasks = [
-        asyncio.create_task(_fire_request(client, debt_id, payload, request_semaphore))
-        for debt_id in batch.debt_ids
-    ]
-    try:
-        results = await asyncio.gather(*tasks)
-    except Exception:
-        for task in tasks:
-            task.cancel()
-        results = []
-        for debt_id in batch.debt_ids:
-            results.append(
-                await _fire_request(client, debt_id, payload, request_semaphore)
-            )
-    counter = Counter(result.get("incentive") for result in results)
-    return counter
-
-
 async def accept_batches(
     batches: List[TenderBatch],
     request_concurrency: int,
-    tender_concurrency: int,
 ) -> Dict[str, Counter]:
     base_url = os.getenv("API_BASE", "http://localhost:3000")
     headers: Dict[str, str] = {"Content-Type": "application/json"}
@@ -156,18 +131,24 @@ async def accept_batches(
         limits=limits,
     ) as client:
         request_semaphore = asyncio.Semaphore(request_concurrency)
-        tender_semaphore = asyncio.Semaphore(tender_concurrency)
+        tasks: List[asyncio.Task] = []
+        metadata: List[Tuple[str, asyncio.Task]] = []
 
-        async def runner(batch: TenderBatch) -> Counter:
-            async with tender_semaphore:
-                return await _run_for_tender(client, batch, request_semaphore)
+        for batch in batches:
+            payload = {"status": "ACCEPTED", "user_id_creditor": batch.user_id_creditor}
+            for debt_id in batch.debt_ids:
+                task = asyncio.create_task(
+                    _fire_request(client, debt_id, payload, request_semaphore)
+                )
+                tasks.append(task)
+                metadata.append((batch.user_id_creditor, task))
 
-        tasks = [asyncio.create_task(runner(batch)) for batch in batches]
-        results = await asyncio.gather(*tasks)
+        await asyncio.gather(*tasks)
 
-    counters: Dict[str, Counter] = {}
-    for batch, counter in zip(batches, results):
-        counters[batch.user_id_creditor] = counter
+    counters: Dict[str, Counter] = defaultdict(Counter)
+    for tender_id, task in metadata:
+        result = task.result()
+        counters[tender_id][result.get("incentive")] += 1
     return counters
 
 
@@ -216,8 +197,7 @@ def verify_distribution(batches: List[TenderBatch], debts_per_tender: int) -> No
 def main() -> None:
     tender_count = int(os.getenv("TENDER_COUNT", "20"))
     debts_per_tender = int(os.getenv("DEBTS_PER_TENDER", "20"))
-    request_concurrency = int(os.getenv("REQUEST_CONCURRENCY", "40"))
-    tender_concurrency = int(os.getenv("TENDER_CONCURRENCY", "4"))
+    request_concurrency = int(os.getenv("REQUEST_CONCURRENCY", "80"))
     reset_db = os.getenv("RESET_DB", "true").lower() in {"1", "true", "yes"}
 
     reset_database_if_needed(reset_db)
@@ -229,9 +209,8 @@ def main() -> None:
     print(
         "Lanzando aceptaciones concurrentes con",
         f"request_concurrency={request_concurrency}",
-        f"tender_concurrency={tender_concurrency}",
     )
-    counters = asyncio.run(accept_batches(batches, request_concurrency, tender_concurrency))
+    counters = asyncio.run(accept_batches(batches, request_concurrency))
 
     for tender_id, counter in counters.items():
         print(f"{tender_id}: {dict(counter)}")

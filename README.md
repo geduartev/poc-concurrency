@@ -1,20 +1,22 @@
-# PoC Concurrency
+# PoC Concurrency - Incentivos Confiados
 
-Objetivo: recibir aceptaciones de deuda de forma concurrente siguiendo unas reglas de estado y montos. Verificar que, si n aceptan al mismo tiempo, los primeros 3 queden sin un monto, los siguientes 7 reciban $12.000 y el resto no obtenga monto tampoco.
+Esta prueba de concepto muestra cómo validar la regla 3/7/10 aun cuando muchos clientes aceptan sus deudas al mismo tiempo. A continuación encontrarás cada paso explicado de forma simple: qué instalar, cómo levantar los servicios, cómo probar manualmente y cómo lanzar la prueba de carga completa.
+
+---
 
 ## Estructura del repositorio
 
 ```
 poc-concurrency/
 ├── backend-nestjs/          # Microservicio NestJS + TypeORM
-│   ├── src/                 # Código
-│   ├── migrations/          # Migraciones TypeORM
+│   ├── src/                 # Código fuente (controladores, servicios, entidades)
+│   ├── migrations/          # Migraciones para las tablas account_notebook y user_notebook_subscription
 │   ├── package.json         # Dependencias y scripts npm
 │   └── ...
-├── loadtest-python/         # Scripts Python para sembrado, pruebas concurrentes y verificación
-├── sql/                     # Scripts tablas
-├── docker-compose.yml       # Postgres
-├── Makefile                 # Atajos de comandos
+├── loadtest-python/         # Scripts Python (seed, carga concurrente, verificación, multi-tendero)
+├── sql/                     # SQL equivalente a las migraciones
+├── docker-compose.yml       # Postgres y contenedor opcional del backend
+├── Makefile                 # Atajos (opcionales) para los comandos
 └── README.md                # Este documento
 ```
 
@@ -22,48 +24,47 @@ poc-concurrency/
 
 ## Requisitos previos
 
-1. **Docker Desktop** Correrlo para levantar Postgres.
-2. **Node.js 20+**
-3. **Python 3.10+** con `pip`. Para las pruebas de carga encontre a "pip" para los scripts.
-4. (Opcional) **Git Bash** o **PowerShell**
+1. **Docker Desktop** (o Docker Engine). Debe estar ejecutándose para levantar Postgres.
+2. **Node.js 20+** (incluye npm). Necesario para NestJS.
+3. **Python 3.10+** con `pip`. Usamos scripts de prueba en Python.
+4. (Opcional) **PowerShell** o **Git Bash**. Las instrucciones usan PowerShell, pero indico comandos equivalentes para CMD.
 
+No necesitas instalar NestJS, TypeORM ni Postgres manualmente: los scripts y Docker se encargan.
 
 ---
 
 ## Paso 1 · Levantar Postgres con Docker
 
-Validar `docker-compose.yml` con un contenedor de Postgres (usuario y contraseña `postgres`). Al iniciar el contenedor se crea automáticamente la base `poc_concurrency`.
+El archivo `docker-compose.yml` define un Postgres con usuario/clave `postgres` y base `poc_concurrency`. Al levantarlo se crea automáticamente el contenedor.
 
 ```powershell
 # Desde la raíz del repositorio
 make up
 ```
 
-Si no tienes `make` instalado puedes ejecutar lo mismo de forma manual:
-
+¿Sin `make`?
 ```powershell
 docker-compose up -d postgres
 ```
 
-- El contenedor queda escuchando en `localhost:5432` y almacena los datos en un volumen.
-- Para detenerlo más adelante usa `docker-compose down`.
+- El contenedor expone `localhost:5432`.
+- Para detenerlo después: `docker-compose down`.
 
 ---
 
-## Paso 2 · Preparar el microservicio NestJS
+## Paso 2 · Preparar y ejecutar el backend NestJS
 
-1. **Copiar archivo de entorno** (contiene ejemplos de configuración TypeORM y API):
+1. **Copiar el archivo de entorno** (trae ejemplos de configuración TypeORM y API):
    ```powershell
    Copy-Item backend-nestjs/.env.example backend-nestjs/.env
    ```
+   Si tu Postgres está en otro host o quieres activar `API_KEY`, edita `backend-nestjs/.env`.
 
-2. **Instalar dependencias y compilar** (para instalar NestJS, TypeORM):
+2. **Instalar dependencias, compilar y aplicar migraciones**:
    ```powershell
    make migrate
    ```
-   El comando anterior ejecuta internamente: `npm install`, `npm run build` y `npm run migration:run`.
-   
-   Si no tienes `make`, hazlo a mano:
+   Internamente ejecuta `npm install`, `npm run build` y `npm run migration:run`. Sin `make`:
    ```powershell
    cd backend-nestjs
    npm install
@@ -71,116 +72,119 @@ docker-compose up -d postgres
    npm run migration:run
    cd ..
    ```
-   Nota: Este paso crea las tablas `account_notebook` y `user_notebook_subscription` en la base.
+   Esto crea las tablas necesarias.
 
 3. **Levantar el servicio**:
    ```powershell
    cd backend-nestjs
    npm run start:dev
    ```
+   - El API queda en `http://localhost:3000`.
+   - Se recarga solo si cambias código en `src/`.
+
 ---
 
-## Paso 3 · Pruebas manuales con Postman
+## Paso 3 · Probar manualmente con Postman
 
-Necesitamos un par de datos para armar la petición: el `ID de la deuda` (UUID) y el `user_id_creditor` (UUID del tendero).
+Necesitas dos valores:
+- `ID de la deuda` (`account_notebook.id`, UUID) → lo genera el script `seed_debts.py`.
+- `user_id_creditor` (UUID del tendero) → el mismo script lo imprime.
 
-- **Método:** `PATCH`
-- **URL:** `http://localhost:3000/account-notebook/<ID>/status`
-  - Reemplaza `<ID>` por el UUID de la deuda que quieres aceptar (ejemplo `865343c6-839c-46f8-bd44-b741026709ab`).
-- **Headers:**
+**Configuración del request:**
+- Método: `PATCH`
+- URL: `http://localhost:3000/account-notebook/<ID>/status`
+  - Reemplaza `<ID>` por el UUID real, por ejemplo `865343c6-839c-46f8-bd44-b741026709ab`.
+- Encabezados:
   - `Content-Type: application/json`
-  - `x-api-key` (solo si en `.env` activaste `API_KEY`).
-- **Body (JSON):**
+  - `x-api-key` si en `.env` activaste `API_KEY`.
+- Cuerpo (`raw` JSON):
   ```json
   {
     "status": "ACCEPTED",
     "user_id_creditor": "<uuid-del-tendero>"
   }
   ```
-  Donde `<uuid-del-tendero>` es el mismo `USER_ID_CREDITOR` que imprimió el script de seed.
+  Reemplaza `<uuid-del-tendero>` por el valor real impreso por el sembrado.
 
-La respuesta será algo como:
+Respuesta esperada (ejemplo):
 ```json
 {
   "ok": true,
   "incentive": "LimitCanPay",
-  "txId": "..."  // sólo si aplica incentivo
+  "txId": "..."  // solo aparece si se otorga incentivo
 }
 ```
+Si llamas varias veces al mismo `ID`, la respuesta se repite (lógica idempotente).
+
 ---
 
-## Paso 4 · Scripts Python (un tendero)
+## Paso 4 · Scripts Python para un tendero
 
-Todos los scripts están en `loadtest-python/`.
-
+Instala dependencias una vez:
 ```powershell
 python -m pip install -r loadtest-python/requirements.txt
 ```
 
-### 4.1. Crear 20 deudas para un tendero
-
-Prueba con 20 deudas. `account_notebook`, todas con `status='CREATED'` y `amount=0`. También imprime los IDs necesarios para las pruebas.
+### 4.1 Sembrar 20 deudas para un tendero
 
 ```powershell
 python loadtest-python/seed_debts.py
 ```
-
 Salida típica:
 ```
 NOTEBOOK_IDS=uuid1,uuid2,...,uuid20
 USER_ID_CREDITOR=uuid-del-tendero
 ACCOUNT_ID_CREDITOR=uuid-de-la-cuenta
 ```
-- **`NOTEBOOK_IDS`** es una lista de 20 UUID separada por comas. Representa cada deuda.
-- **`USER_ID_CREDITOR`** es el tendero al que pertenecen todas las deudas.
-- **`ACCOUNT_ID_CREDITOR`** no es indispensable para la prueba, pero se muestra por si lo necesitas en consultas posteriores.
+- `NOTEBOOK_IDS`: 20 UUID separados por comas (una deuda por cada cliente).
+- `USER_ID_CREDITOR`: UUID del tendero dueño de esas deudas.
+- `ACCOUNT_ID_CREDITOR`: información adicional (no obligatoria para las pruebas).
 
-### 4.2. Exportar variables de entorno
+### 4.2 Exportar variables de entorno
 
-- **PowerShell** (ventanas modernas de Windows):
+Los scripts siguientes leen `NOTEBOOK_IDS` y `USER_ID_CREDITOR` desde variables de entorno. Ejemplos:
+- **PowerShell**
   ```powershell
   $env:NOTEBOOK_IDS = "uuid1,uuid2,..."
   $env:USER_ID_CREDITOR = "uuid-del-tendero"
   ```
-- **CMD clásico**:
+- **CMD**
   ```cmd
   set NOTEBOOK_IDS=uuid1,uuid2,...
   set USER_ID_CREDITOR=uuid-del-tendero
   ```
-- **Git Bash / WSL / Linux / macOS:**
+- **Git Bash / Linux / macOS**
   ```bash
   export NOTEBOOK_IDS="uuid1,uuid2,..."
   export USER_ID_CREDITOR="uuid-del-tendero"
   ```
 
-### 4.3. Lanzar las 20 aceptaciones concurrentes
+### 4.3 Ejecutar la carga concurrente del tendero
 
 ```powershell
 python loadtest-python/concurrent_accept.py
 ```
+- Envía 20 `PATCH` en paralelo usando `httpx` + `asyncio`.
+- Reintenta ante errores 409/429/5xx.
+- Resultado esperado:
+  ```
+  LowerLimitToPay: 3
+  LimitCanPay: 7
+  HigherLimitToPay: 10
+  ```
 
-¿Qué hace? Envía 20 `PATCH` casi simultáneos al backend usando `httpx` + `asyncio`, respeta reintentos ante errores 409/5xx y al final muestra cuántas deudas quedaron con cada incentivo.
-
-De acuerdo a lo entendido:
-```
-LowerLimitToPay: 3
-LimitCanPay: 7
-HigherLimitToPay: 10
-```
-
-### 4.4. Verificar en la base
+### 4.4 Verificar la base directamente
 
 ```powershell
 python loadtest-python/verify_db.py
 ```
-
-Para agrupar y verificar más rápido que en Postgresadmin `status_by_pay_shopkeeper`, confirmando 3/7/10.
+Muestra un resumen agrupado por `status_by_pay_shopkeeper`, confirmando la distribución 3/7/10 y los montos ($0 vs $12.000).
 
 ---
 
-## Paso 5 · Prueba de carga multi-tendero
+## Paso 5 · Prueba de carga multi-tendero (sin lotes)
 
-Crea varios tenderos y lanza todas las aceptaciones al mismo tiempo: `loadtest-python/multi_tender_loadtest.py` 
+`loadtest-python/multi_tender_loadtest.py` crea varios tenderos y lanza **todas las deudas al mismo tiempo** (sin procesarlas por bloques). Cada deuda es una tarea independiente, controlada únicamente por un semáforo global.
 
 ```powershell
 python loadtest-python/multi_tender_loadtest.py
@@ -188,48 +192,44 @@ python loadtest-python/multi_tender_loadtest.py
 
 ### Configuración
 
-Puedes controlar el comportamiento con variables de entorno:
+Ajusta las variables antes de ejecutar el script:
 
 | Variable | Descripción | Valor por defecto |
 |----------|-------------|-------------------|
-| `TENDER_COUNT` | Número de tenderos que se generan | 20 |
+| `TENDER_COUNT` | Número de tenderos a generar | 20 |
 | `DEBTS_PER_TENDER` | Deudas por tendero | 20 |
-| `REQUEST_CONCURRENCY` | Máximo de peticiones simultáneas contra el API | 40 |
-| `TENDER_CONCURRENCY` | Cuántos tenderos se procesan a la vez | 4 |
-| `RESET_DB` | Si `true`, hace `TRUNCATE` antes de sembrar | true |
-| `API_BASE` | URL base del backend (ej. `http://localhost:3000`) | `http://localhost:3000` |
-| `API_KEY` | API key opcional | vacío |
+| `REQUEST_CONCURRENCY` | Máximo de solicitudes simultáneas contra el API (global, sin lotes) | 80 |
+| `RESET_DB` | Si `true`, realiza `TRUNCATE` antes del sembrado | true |
+| `API_BASE` | URL del backend | `http://localhost:3000` |
+| `API_KEY` | API key si la definiste | (vacío) |
 
-Ejemplo en PowerShell para personalizarla:
+Ejemplo en PowerShell:
 ```powershell
-$env:TENDER_COUNT = "20000"
+$env:TENDER_COUNT = "30"
 $env:DEBTS_PER_TENDER = "25"
-$env:REQUEST_CONCURRENCY = "100"
-$env:TENDER_CONCURRENCY = "20"
+$env:REQUEST_CONCURRENCY = "120"
 python loadtest-python/multi_tender_loadtest.py
 ```
 
-Dejé lo siguiente:
-- Imprima la distribución
-- Aborta con un error descriptivo si no cumple  3/7/10 
-- Aborta si el dinero no es 0/12.000 donde corresponde
+El script imprime la distribución por tendero y falla con un mensaje claro si algún tendero no termina con 3/7/10 o si los montos difieren de $0/$12.000.
 
 ---
 
 ## Limpieza
 
-Cuando hayas terminado:
-
+Detén y elimina el contenedor de Postgres cuando termines:
 ```powershell
 docker-compose down
 ```
-Esto detiene y elimina el contenedor de Postgres creado con Docker Compose.
 
 ---
 
 ## Notas técnicas
 
-- EL LUNES MIRO  TODO: Validar si esto es ventajoso o no: Las transacciones usan nivel `SERIALIZABLE` combinado con `pg_advisory_xact_lock` para serializar las aceptaciones por tendero.
-- TODO: probar si en un choque de concurrencia (`could not serialize access`), el servicio reintenta automáticamente con un backoff ligero.
-- TODO: verificar como en un código de estrategia de migración si al utilizar `UPDATE ... RETURNING` sobre `user_notebook_subscription` para obtener la posición de aceptación (1..n). Así se decide el incentivo sin condiciones de carrera.
-- TODO: Validar si el índice parcial `uq_tx_pay_shopkeeper` garantiza que no existan incentivos duplicados para una misma deuda.
+- Cada aceptación se procesa en una transacción `SERIALIZABLE` con `pg_advisory_xact_lock`, garantizando que las posiciones (1..n) sean únicas por tendero.
+- Si Postgres devuelve `could not serialize access`, el servicio reintenta automáticamente hasta 8 veces con un breve backoff.
+- `UPDATE ... RETURNING` se usa sobre `user_notebook_subscription` para conocer la posición aceptada y clasificar el incentivo sin condiciones de carrera.
+- El monto (`amount`) se actualiza en el mismo `UPDATE`: posiciones 1–3 → $0, 4–10 → $12.000, ≥11 → $0.
+- El índice parcial `uq_tx_pay_shopkeeper` impide duplicar incentivos para la misma deuda.
+
+Con estos pasos puedes levantar el entorno, probar manualmente y ejecutar las pruebas de carga sencillas o masivas sin adivinar ningún dato. ¡Listo para experimentar!
