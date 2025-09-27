@@ -13,8 +13,10 @@ export PGDATABASE
 export PGUSER
 export PGPASSWORD
 export DEBT_AMOUNT
+export TENDER_COUNT
+export DEBTS_PER_TENDER
 
-.PHONY: up migrate seed test verify backend install-python
+.PHONY: up migrate seed test verify backend install-python test-multi
 
 up:
 	$(COMPOSE) up -d postgres
@@ -30,6 +32,9 @@ seed: install-python
 
 test: install-python
 	$(PYTHON) loadtest-python/concurrent_accept.py
+
+test-multi: install-python
+	$(PYTHON) loadtest-python/multi_tender_loadtest.py
 
 verify: install-python
 	$(PYTHON) loadtest-python/verify_db.py
