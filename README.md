@@ -229,7 +229,7 @@ Esto detiene y elimina el contenedor de Postgres creado con Docker Compose.
 
 ## Notas técnicas
 
-- GABO TODO: Validar si esto es ventajoso o no: Las transacciones usan nivel `SERIALIZABLE` combinado con `pg_advisory_xact_lock` para serializar las aceptaciones por tendero.
-- GABO TODO: probar si en un choque de concurrencia (`could not serialize access`), el servicio reintenta automáticamente con un backoff ligero.
-- GABO TODO: verificar como en un código de estrategia de migración si al utilizar `UPDATE ... RETURNING` sobre `user_notebook_subscription` para obtener la posición de aceptación (1..n). Así se decide el incentivo sin condiciones de carrera.
-- CREO QUE EESTO ME AYUDÓ GABO TODO: Validar si el índice parcial `uq_tx_pay_shopkeeper` garantiza que no existan incentivos duplicados para una misma deuda.
+- EL LUNES MIRO  TODO: Validar si esto es ventajoso o no: Las transacciones usan nivel `SERIALIZABLE` combinado con `pg_advisory_xact_lock` para serializar las aceptaciones por tendero.
+- TODO: probar si en un choque de concurrencia (`could not serialize access`), el servicio reintenta automáticamente con un backoff ligero.
+- TODO: verificar como en un código de estrategia de migración si al utilizar `UPDATE ... RETURNING` sobre `user_notebook_subscription` para obtener la posición de aceptación (1..n). Así se decide el incentivo sin condiciones de carrera.
+- TODO: Validar si el índice parcial `uq_tx_pay_shopkeeper` garantiza que no existan incentivos duplicados para una misma deuda.
