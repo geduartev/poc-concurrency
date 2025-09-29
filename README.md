@@ -37,7 +37,6 @@ Archivo `docker-compose.yml` define Postgres con usuario/clave `postgres` y BD `
 
 ```powershell
 docker-compose up -d postgres
-make up
 ```
 
 - El contenedor expone `localhost:5432`.
@@ -63,7 +62,7 @@ docker-compose down
    make migrate
    ```
 
-   Internamente ejecuta `npm install`, `npm run build` y `npm run migration:run`. Sin `make`:
+   Internamente ejecuta `npm install`, `npm run build` y `npm run migration:run`.
 
    ```powershell
    cd backend-nestjs
