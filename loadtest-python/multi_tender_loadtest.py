@@ -137,12 +137,19 @@ async def accept_batches(
 
         for batch in batches:
             payload = {"status": "ACCEPTED", "user_id_creditor": batch.user_id_creditor}
+            # el primer intento crea la suscripción; los extras fuerzan la concurrencia extrema.
             for debt_id in batch.debt_ids:
-                task = asyncio.create_task(
-                    _fire_request(client, debt_id, payload, request_semaphore)
-                )
-                tasks.append(task)
-                metadata.append((batch.user_id_creditor, task))
+                for attempt in range(attempts_per_debt):
+                    headers_payload = payload
+                    if attempt > 0:
+                        # este flag ayuda a identificar en logs cuándo se trata de intentos repetidos
+                        headers_payload = dict(payload)
+                        headers_payload["__attempt"] = str(attempt)
+                    task = asyncio.create_task(
+                        _fire_request(client, debt_id, headers_payload, request_semaphore)
+                    )
+                    tasks.append(task)
+                    metadata.append((batch.user_id_creditor, task))
 
         await asyncio.gather(*tasks)
 
@@ -211,6 +218,7 @@ def main() -> None:
     print(
         "Lanzando aceptaciones concurrentes con",
         f"request_concurrency={request_concurrency}",
+        f"attempts_per_debt={attempts_per_debt}",
     )
     counters = asyncio.run(accept_batches(batches, request_concurrency, attempts_per_debt))
 

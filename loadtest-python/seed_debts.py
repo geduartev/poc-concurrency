@@ -5,7 +5,7 @@ from typing import List
 
 import psycopg2
 
-# Script de sembrado rapido para generar 20 deudas creadas para un tendero.
+# Script para generar 20 deudas
 
 def _conn_kwargs():
     return {
