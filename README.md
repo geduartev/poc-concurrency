@@ -207,9 +207,9 @@ python loadtest-python/multi_tender_loadtest.py
 Ajusta las variables antes de ejecutar el script:
 | Variable | Descripción | Valor por defecto |
 |----------|-------------|-------------------|
-| `TENDER_COUNT` | Número de tenderos a generar | 100000 |
+| `TENDER_COUNT` | Número de tenderos a generar | 200 |
 | `DEBTS_PER_TENDER` | Deudas por tendero | 20 |
-| `REQUEST_CONCURRENCY` | Máximo de solicitudes simultáneas contra el API (global, sin lotes) | 100 |
+| `REQUEST_CONCURRENCY` | Máximo de solicitudes simultáneas contra el API (global, sin lotes) | 20 |
 | `ATTEMPTS_PER_DEBT` | Reintentos para validar idempotencia | 1 |
 | `RESET_DB` | Si `true`, realiza `TRUNCATE` antes de la insercción en BD | true |
 | `API_BASE` | URL del backend | `http://localhost:3000` |
@@ -219,10 +219,10 @@ Ejemplo en PowerShell:
 
 ```powershell
 python loadtest-python/verify_db.py
-$env:TENDER_COUNT = "100000"
+$env:TENDER_COUNT = "200"
 $env:DEBTS_PER_TENDER = "20"
-$env:REQUEST_CONCURRENCY = "100"
-$env:ATTEMPTS_PER_DEBT = "2" 
+$env:REQUEST_CONCURRENCY = "20"
+$env:ATTEMPTS_PER_DEBT = "1" 
 python loadtest-python/multi_tender_loadtest.py
 ```
 
