@@ -58,10 +58,6 @@ docker-compose down
 
 2. **Instalar dependencias, compilar y aplicar migraciones**:
 
-   ```powershell
-   make migrate
-   ```
-
    Internamente ejecuta `npm install`, `npm run build` y `npm run migration:run`.
 
    ```powershell
